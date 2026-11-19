@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Deal Generator</title>
+<style>body{font:14px system-ui;padding:16px;background:#fff;color:#222}pre{white-space:pre-wrap}</style></head>
+<body>
+<h1>Winnable deal generator</h1>
+<p>Runs the solver over many shuffles in background workers; results collect in <code>window.R</code>.</p>
+<pre id="log"></pre>
+<script>
+  window.R = [];
+  window.running = 0;
+  // run({suits, start, count, workers, opts})
+  window.run = ({ suits, start, count, workers = 4, opts = {} }) => {
+    for (let w = 0; w < workers; w++) {
+      const wk = new Worker('gen-worker.js?' + Date.now());
+      running++;
+      wk.onmessage = e => {
+        if (e.data.finished) { running--; wk.terminate(); return; }
+        R.push(e.data);
+      };
+      wk.postMessage({ suits, start: start + w, count: Math.ceil(count / workers), step: workers, opts });
+    }
+  };
+  window.summary = () => {
+    const by = {};
+    for (const r of R) { const b = by[r.suits] = by[r.suits] || { tried: 0, won: 0, ms: 0 }; b.tried++; if (r.won) b.won++; b.ms += r.ms; }
+    for (const k in by) by[k].avgMs = Math.round(by[k].ms / by[k].tried);
+    return { running, by };
+  };
+  setInterval(() => document.getElementById('log').textContent = JSON.stringify(summary(), null, 1), 1000);
+</script>
+</body></html>
