@@ -1,6 +1,6 @@
 // Offline support: use the network when online (so updates arrive), fall back to the saved copy when offline.
 // Bump CACHE on every release.
-const CACHE = 'spider-v1';
+const CACHE = 'spider-v2';
 const ASSETS = ['./', './index.html', './cards.js', './solver.js', './deals.js', './game.js', './manifest.webmanifest',
   './icon-192.png', './icon-512.png', './icon-maskable-512.png'];
 

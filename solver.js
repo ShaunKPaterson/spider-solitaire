@@ -211,10 +211,10 @@ const Spider = (() => {
     const cols = cols0.map(col => col.map(code));
     const stock = stock0.map(code);
     const done0 = 8 - (cols.flat().length + stock.length) / 13;
-    const seen = new Set();
     let frontier = [{ cols, stock, done: done0, v: 0, depth: 0 }];
     let nodes = 0;
     for (;;) {
+      const seen = new Set();   // positions from different stages can never match, so remember one stage at a time
       const cands = [];
       const last = !frontier[0].stock.length;
       for (const f of frontier) {
