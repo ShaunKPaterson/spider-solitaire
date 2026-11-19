@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Card Designs</title>
+<style>
+  body { margin: 0; background: radial-gradient(ellipse at 50% 60%, #12a02c 0%, #0b7a1f 55%, #075a16 100%); color: #fff;
+         font-family: Roboto, 'Segoe UI', Arial, sans-serif; padding: 16px; }
+  h1 { font-size: 22px; margin: 4px 0 4px; }
+  p.lead { margin: 0 0 16px; opacity: .9; }
+  section { background: rgba(0,0,0,.18); border-radius: 12px; padding: 12px 14px 16px; margin-bottom: 16px; }
+  h2 { font-size: 18px; margin: 0 0 2px; }
+  section p { margin: 0 0 10px; opacity: .85; font-size: 14px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row img { width: 110px; height: 154px; border-radius: 7px; box-shadow: 0 2px 6px rgba(0,0,0,.35); }
+  .gap { width: 14px; }
+</style>
+</head>
+<body>
+<h1>Picture card designs</h1>
+<p class="lead">Three styles to choose from: Jack, Queen and King, shown in spades and hearts. You can switch styles in the game's Settings.</p>
+<div id="styles"></div>
+<section>
+  <h2>Card backs</h2>
+  <p>Shown on face-down cards.</p>
+  <div class="row" id="backs"></div>
+</section>
+<section>
+  <h2>Number cards</h2>
+  <p>The same in every style. The big corner number stays readable when cards overlap.</p>
+  <div class="row" id="nums"></div>
+</section>
+<script src="cards.js"></script>
+<script>
+  const box = document.getElementById('styles');
+  for (const [key, st] of Object.entries(Cards.STYLES)) {
+    const sec = document.createElement('section');
+    sec.innerHTML = `<h2>${st.name}</h2><p>${st.blurb}</p><div class="row"></div>`;
+    const row = sec.querySelector('.row');
+    [0, 1].forEach((s, i) => {
+      if (i) row.appendChild(Object.assign(document.createElement('div'), { className: 'gap' }));
+      [11, 12, 13].forEach(r => row.appendChild(Object.assign(new Image(), { src: Cards.faceURL(r, s, key), alt: '' })));
+    });
+    box.appendChild(sec);
+  }
+  for (const k of Object.keys(Cards.BACKS))
+    document.getElementById('backs').appendChild(Object.assign(new Image(), { src: Cards.backURL(k), alt: '' }));
+  [[1, 0], [5, 1], [7, 3], [10, 2], [8, 0]].forEach(([r, s]) =>
+    document.getElementById('nums').appendChild(Object.assign(new Image(), { src: Cards.faceURL(r, s, 'royal'), alt: '' })));
+</script>
+</body>
+</html>

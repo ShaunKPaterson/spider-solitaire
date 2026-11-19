@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#0a6b1c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Spider Solitaire</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<style>
+  :root { --baize1: #13a52f; --baize2: #0b7d20; --baize3: #06561a; --gold: #e6c46a; --ink: #1b1d22; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; overflow: hidden; overscroll-behavior: none; }
+  body {
+    background: radial-gradient(ellipse at 50% 70%, var(--baize1) 0%, var(--baize2) 55%, var(--baize3) 100%) fixed, #0b7d20;
+    font-family: Roboto, 'Segoe UI', Arial, sans-serif; color: #fff; user-select: none; -webkit-user-select: none;
+    touch-action: none;
+  }
+  /* subtle felt texture */
+  body::before { content: ''; position: fixed; inset: 0; pointer-events: none; opacity: .18;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2'/><feColorMatrix values='0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 .55 0'/></filter><rect width='120' height='120' filter='url(%23n)'/></svg>"); }
+
+  #app { position: fixed; inset: 0; display: flex;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+  #table { position: relative; flex: 1; min-width: 0; }
+  #rail { width: 66px; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 8px 4px;
+    background: rgba(0,0,0,.16); }
+  @media (orientation: portrait) {
+    #app { flex-direction: column; }
+    #rail { width: auto; height: 74px; flex-direction: row; padding: 6px 10px; }
+  }
+  .spacer { flex: 1; }
+  .btn { width: 50px; height: 46px; border: 0; border-radius: 10px; background: rgba(0,0,0,.28); color: #fff;
+    display: grid; place-items: center; font: 600 10px/1 inherit; gap: 2px; padding: 4px 0; cursor: pointer; }
+  .btn svg { width: 22px; height: 22px; fill: none; stroke: #fff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .btn:active { background: rgba(0,0,0,.45); }
+  .btn:disabled { opacity: .35; }
+
+  .pile { position: relative; width: 48px; height: 67px; cursor: pointer; flex: none; }
+  .pile img { position: absolute; width: 44px; height: 62px; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+  .pile .empty { position: absolute; inset: 0 4px 5px 0; border: 2px dashed rgba(255,255,255,.3); border-radius: 6px; }
+  .badge { position: absolute; right: -4px; bottom: -4px; background: #fff; color: var(--ink); font: 700 11px/1 inherit;
+    border-radius: 10px; padding: 3px 6px; box-shadow: 0 1px 3px rgba(0,0,0,.4); }
+  #stock.pulse { animation: pulse 1.2s ease-in-out 2; }
+  @keyframes pulse { 50% { transform: scale(1.12); filter: drop-shadow(0 0 8px #ffe680); } }
+
+  .card { position: absolute; left: 0; top: 0; width: var(--cw); height: var(--ch); border-radius: calc(var(--cw) * .075);
+    background-size: 100% 100%; box-shadow: 0 1px 2px rgba(0,0,0,.35);
+    transition: transform .2s ease, opacity .25s ease; will-change: transform; }
+  .card.drag { transition: none; box-shadow: 0 8px 18px rgba(0,0,0,.45); }
+  .card.gone { opacity: 0 !important; pointer-events: none; transition: transform .45s ease, opacity .25s ease .4s; }
+  .card.hint { outline: 3px solid #ffe14d; outline-offset: -1px; box-shadow: 0 0 14px 3px rgba(255,225,77,.8); }
+  .card.shake { animation: shake .3s; }
+  @keyframes shake { 25% { margin-left: -4px; } 75% { margin-left: 4px; } }
+  .slot { position: absolute; width: var(--cw); height: var(--ch); border-radius: calc(var(--cw) * .075);
+    border: 2px solid rgba(255,255,255,.18); }
+  .slot.hint { border-color: #ffe14d; box-shadow: 0 0 14px 3px rgba(255,225,77,.8); }
+
+  #toast { position: fixed; left: 50%; bottom: 18px; transform: translate(-50%, 30px); opacity: 0; pointer-events: none;
+    background: rgba(20,20,20,.88); padding: 10px 16px; border-radius: 20px; font-size: 14px; transition: .25s; max-width: 86vw; text-align: center; z-index: 900; }
+  #toast.show { transform: translate(-50%, 0); opacity: 1; }
+
+  /* Dialogs */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 10px; }
+  .overlay.open { display: flex; }
+  .panel { background: #fbfaf6; color: var(--ink); border-radius: 14px; width: min(560px, 100%); max-height: 100%;
+    display: flex; flex-direction: column; box-shadow: 0 10px 40px rgba(0,0,0,.5); overflow: hidden; }
+  .tabs { display: flex; background: #0b7d20; }
+  .tabs button { flex: 1; border: 0; background: none; color: #d8f0dc; font: 600 14px inherit; padding: 11px 4px; cursor: pointer; }
+  .tabs button.on { color: #fff; box-shadow: inset 0 -3px 0 var(--gold); }
+  .tabs .close { flex: 0 0 46px; font-size: 20px; }
+  .page { padding: 12px 16px 14px; overflow: auto; display: none; }
+  .page.on { display: block; }
+  .page h3 { margin: 4px 0 8px; font-size: 15px; }
+  .choices { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+  .choice { border: 2px solid #d5d2c8; background: #fff; border-radius: 10px; padding: 8px 12px; font: 600 14px inherit; color: var(--ink); cursor: pointer; }
+  .choice.on { border-color: #0b7d20; background: #e6f5e8; }
+  .choice small { display: block; font-weight: 400; color: #666; margin-top: 2px; }
+  .choice img { height: 62px; border-radius: 4px; margin: 0 1px; }
+  .wide { width: 100%; padding: 12px; font-size: 16px; }
+  .primary { background: #0b7d20; border-color: #0b7d20; color: #fff; }
+  .row2 { display: flex; gap: 8px; }
+  .row2 > * { flex: 1; }
+  label.toggle { display: flex; gap: 10px; align-items: center; font-size: 14px; margin: 6px 0 2px; }
+  label.toggle input { width: 20px; height: 20px; accent-color: #0b7d20; }
+  table.stats { border-collapse: collapse; width: 100%; font-size: 14px; }
+  table.stats th, table.stats td { padding: 6px 4px; text-align: center; border-bottom: 1px solid #e6e3da; }
+  table.stats th:first-child, table.stats td:first-child { text-align: left; }
+  .help p, .help li { font-size: 14px; line-height: 1.45; margin: 0 0 6px; }
+  .help ul { padding-left: 18px; margin: 0 0 8px; }
+  .muted { color: #666; font-size: 13px; }
+  #win .panel { text-align: center; padding: 18px 18px 16px; }
+  #win h2 { margin: 2px 0 6px; font-size: 26px; color: #0b7d20; }
+  #win img { height: 90px; margin: 0 2px 8px; border-radius: 6px; box-shadow: 0 2px 6px rgba(0,0,0,.3); }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="table"></div>
+  <div id="rail">
+    <button class="btn" id="bMenu" aria-label="Menu"><svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>Menu</button>
+    <button class="btn" id="bUndo" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/></svg>Undo</button>
+    <button class="btn" id="bHint" aria-label="Hint"><svg viewBox="0 0 24 24"><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.8.8 1 1.5 1 2.5h6c0-1 .2-1.7 1-2.5A6 6 0 0 0 12 3z"/></svg>Hint</button>
+    <div class="spacer"></div>
+    <div class="pile" id="done" title="Completed runs"></div>
+    <div class="pile" id="stock" title="Deal"></div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<div class="overlay" id="menu">
+  <div class="panel">
+    <div class="tabs">
+      <button data-tab="game" class="on">Game</button>
+      <button data-tab="look">Cards</button>
+      <button data-tab="stats">Stats</button>
+      <button data-tab="help">Help</button>
+      <button class="close" id="mClose" aria-label="Close">✕</button>
+    </div>
+    <div class="page on" data-page="game">
+      <h3>New game</h3>
+      <div class="choices row2" id="newGame">
+        <button class="choice" data-suits="1">1 suit<small>Easy</small></button>
+        <button class="choice" data-suits="2">2 suits<small>Medium</small></button>
+        <button class="choice" data-suits="4">4 suits<small>Hard</small></button>
+      </div>
+      <button class="choice wide" id="restart">Restart this deal</button>
+      <label class="toggle"><input type="checkbox" id="winnable"> Winnable deals only (every new game can be won; recommended while learning)</label>
+      <label class="toggle"><input type="checkbox" id="strict"> Fill every empty column before dealing (traditional rule)</label>
+      <p class="muted" id="gameInfo"></p>
+    </div>
+    <div class="page" data-page="look">
+      <h3>Picture cards</h3>
+      <div class="choices" id="faceChoices"></div>
+      <h3>Card back</h3>
+      <div class="choices" id="backChoices"></div>
+    </div>
+    <div class="page" data-page="stats">
+      <table class="stats" id="statsTable"></table>
+      <p class="muted" style="margin-top:10px">Every new or restarted game counts as played.</p>
+      <button class="choice" id="resetStats">Reset statistics</button>
+    </div>
+    <div class="page help" data-page="help">
+      <p><b>Goal:</b> build runs from King down to Ace in one suit. Each finished run is cleared away. Clear all eight to win.</p>
+      <ul>
+        <li>A card can go on any card one higher, whatever the suit: a 7 on any 8.</li>
+        <li>A group moves together only if it runs downwards in the same suit.</li>
+        <li>Any card or run can go into an empty column.</li>
+        <li>Tap the deck (bottom right) to deal one card onto every column.</li>
+      </ul>
+      <p><b>Controls:</b> drag a card, or just tap it and it jumps to the best place. Undo has no limit. Hint shows a good move and cycles through others if you press it again.</p>
+      <p><b>Winnable deals only</b> (Menu → Game, on by default): new games are picked from deals a computer solver has already won, so a win is always possible, though you may need Undo to find it. Turn it off for completely random deals, some of which can't be won.</p>
+      <p><b>Tips:</b> turn over face-down cards first, build in suit, and keep an empty column free for reorganising. Only deal when you run out of useful moves.</p>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="win">
+  <div class="panel">
+    <h2>You won!</h2>
+    <div id="winCards"></div>
+    <p id="winText"></p>
+    <div class="row2"><button class="choice primary wide" id="winNew">New game</button></div>
+  </div>
+</div>
+
+<script src="cards.js"></script>
+<script src="solver.js"></script>
+<script src="deals.js"></script>
+<script src="game.js"></script>
+<script>
+  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
