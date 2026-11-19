@@ -6,7 +6,9 @@
 <p>Runs the solver over many shuffles in background workers; results collect in <code>window.R</code>.</p>
 <pre id="log"></pre>
 <script>
-  window.R = [];
+  // results are kept in localStorage too, so a crash or reload doesn't lose them
+  window.R = (() => { try { return JSON.parse(localStorage.getItem('gen.R')) || []; } catch { return []; } })();
+  const keep = () => { try { localStorage.setItem('gen.R', JSON.stringify(R)); } catch {} };
   window.running = 0;
   // run({suits, start, count, workers, opts})
   window.run = ({ suits, start, count, workers = 4, opts = {} }) => {
@@ -16,6 +18,7 @@
       wk.onmessage = e => {
         if (e.data.finished) { running--; wk.terminate(); return; }
         R.push(e.data);
+        keep();
       };
       wk.postMessage({ suits, start: start + w, count: Math.ceil(count / workers), step: workers, opts });
     }
