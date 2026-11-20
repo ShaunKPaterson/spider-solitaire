@@ -15,12 +15,14 @@ const saveSettings = () => store.set('settings', settings);
 const statFor = n => (stats[n] = stats[n] || { played: 0, won: 0, best: null, streak: 0, bestStreak: 0 });
 
 // ---------- State ----------
-let S = null;          // { cols, stock, done, moves, score, suits, seed, won, counted }
-let history = [];      // snapshots for undo
+let S = null;          // { cols, stock, done, moves, score, suits, seed, winnable, won, counted }
+let history = [];      // snapshots for Undo
+let future = [];       // snapshots for Redo
 const els = new Map(); // card id -> element
 let L = null;          // current layout
 let pos = new Map();   // card id -> {x, y}
 let hintList = null, hintAt = 0;
+let sel = null;        // selected run: {c, i}
 
 // Pick the next deal: from the list of solver-proven winnable deals, or any random shuffle.
 function pickSeed(suits) {
@@ -44,12 +46,17 @@ function newGame(suits = settings.suits, seed = null, winnable = false) {
   const { cols, stock } = Spider.deal(suits, seed);
   const cards = [...cols.flat(), ...stock];
   S = { cols, stock, done: [], moves: 0, score: 500, suits, seed, winnable, won: false, counted: false };
-  history = [];
-  hintList = null;
+  history = []; future = [];
+  hintList = null; sel = null;
   buildCards();
   layout();
-  // start every card at the deck, then deal it out
-  for (const c of cards) { pos.set(c.id, { x: L.stockX, y: L.stockY }); place(els.get(c.id), L.stockX, L.stockY, 0); els.get(c.id).style.opacity = 0; }
+  // start every card on the deck, then deal it out
+  for (const c of cards) {
+    const e = els.get(c.id);
+    pos.set(c.id, { x: L.stockX, y: L.stockY });
+    e.classList.add('instock');
+    place(e, L.stockX, L.stockY, 0);
+  }
   requestAnimationFrame(() => requestAnimationFrame(() => render({ stagger: true })));
   save();
 }
@@ -63,8 +70,8 @@ function countPlayed() {
 }
 
 const snapshot = () => JSON.stringify({ cols: S.cols, stock: S.stock, done: S.done, moves: S.moves, score: S.score });
-function pushHistory() { history.push(snapshot()); if (history.length > 1000) history.shift(); }
-function save() { store.set('game', { S, history: history.slice(-300) }); updateRail(); }
+function pushHistory() { history.push(snapshot()); if (history.length > 1000) history.shift(); future = []; }
+function save() { store.set('game', { S, history: history.slice(-300), future: future.slice(-300) }); updatePiles(); }
 
 // ---------- Rules ----------
 function movableFrom(c, i) {
@@ -102,54 +109,46 @@ function moveRun(src, i, dst) {
   S.cols[dst].push(...run);
   flipTop(src);
   S.moves++; S.score--;
-  const cleared = collect(dst);
-  afterChange(cleared);
+  collect(dst);
+  afterChange();
 }
 
 function deal() {
-  if (S.won) return;
+  if (!S || S.won) return;
+  sel = null;
   if (!S.stock.length) { toast('No more cards to deal'); return; }
   if (settings.strictDeal && S.cols.some(c => !c.length)) { toast('Fill every empty column before dealing'); return; }
   countPlayed();
   pushHistory();
   for (let c = 0; c < 10; c++) { const card = S.stock.pop(); card.up = true; S.cols[c].push(card); }
   S.moves++; S.score--;
-  let cleared = false;
-  for (let c = 0; c < 10; c++) cleared = collect(c) || cleared;
-  afterChange(cleared, true);
+  for (let c = 0; c < 10; c++) collect(c);
+  afterChange(true);
 }
 
+function restore(snap) { Object.assign(S, JSON.parse(snap)); sel = null; hintList = null; clearHint(); render(); save(); }
 function undo() {
   if (!history.length) return;
-  const h = JSON.parse(history.pop());
-  Object.assign(S, h);
-  hintList = null;
-  clearHint();
-  render();
-  save();
+  future.push(snapshot());
+  restore(history.pop());
+}
+function redo() {
+  if (!future.length) return;
+  history.push(snapshot());
+  restore(future.pop());
+  if (S.done.length === 8) setTimeout(win, 700);
 }
 
-function afterChange(cleared, stagger) {
+function afterChange(stagger) {
   hintList = null;
+  sel = null;
   clearHint();
   render({ stagger });
   save();
   if (S.done.length === 8) setTimeout(win, 700);
 }
 
-// ---------- Moves for taps and hints ----------
-function destinations(c, i) {
-  const card = S.cols[c][i];
-  const out = [];
-  for (let d = 0; d < 10; d++) {
-    if (d === c || !canDrop(d, card)) continue;
-    const col = S.cols[d];
-    if (!col.length) { if (i > 0) out.push({ d, score: 1 }); continue; }
-    out.push({ d, score: col[col.length - 1].s === card.s ? 4 : 2 });
-  }
-  return out.sort((a, b) => b.score - a.score || a.d - b.d);
-}
-
+// ---------- Hints ----------
 function allMoves() {
   const res = [];
   S.cols.forEach((col, c) => {
@@ -183,28 +182,26 @@ function hint() {
   if (!hintList) { hintList = allMoves(); hintAt = 0; }
   if (!hintList.length) {
     if (S.stock.length) { toast('No useful moves — try dealing'); const st = $('#stock'); st.classList.remove('pulse'); void st.offsetWidth; st.classList.add('pulse'); }
-    else toast('No moves left — try Undo or a new game');
+    else toast('No moves left — try Undo or the next game');
     return;
   }
   const m = hintList[hintAt++ % hintList.length];
-  const ids = S.cols[m.c].slice(m.i).map(c => c.id);
-  ids.forEach(id => els.get(id).classList.add('hint'));
+  S.cols[m.c].slice(m.i).forEach(c => els.get(c.id).classList.add('hint'));
   const dcol = S.cols[m.d];
   if (dcol.length) els.get(dcol[dcol.length - 1].id).classList.add('hint');
   else table.querySelectorAll('.slot')[m.d].classList.add('hint');
   clearTimeout(hint.t);
   hint.t = setTimeout(clearHint, 1600);
 }
-function clearHint() { table.querySelectorAll('.hint').forEach(e => e.classList.remove('hint')); }
+function clearHint() { document.querySelectorAll('.hint').forEach(e => e.classList.remove('hint')); }
 
 // ---------- Layout and drawing ----------
 function buildCards() {
   table.querySelectorAll('.card').forEach(e => e.remove());
   els.clear();
   pos.clear();
-  const all = [...S.cols.flat(), ...S.stock];
-  // completed cards no longer exist in state; make all 104 so undo can bring them back
-  const ids = new Set(all.map(c => c.id));
+  const ids = new Set([...S.cols.flat(), ...S.stock].map(c => c.id));
+  // completed cards are no longer in the game state; make all 104 so Undo can bring them back
   for (let id = 0; id < 104; id++) {
     const e = document.createElement('div');
     e.className = 'card';
@@ -215,22 +212,30 @@ function buildCards() {
   }
 }
 
+const RATIO = Cards.H / Cards.W;
 function layout() {
   const tw = table.clientWidth, th = table.clientHeight;
-  const gap = Math.max(3, Math.round(tw * .008));
-  let cw = (tw - 11 * gap) / 10, ch = cw * 1.4;
-  if (ch > th * .4) { ch = th * .4; cw = ch / 1.4; }
+  const gap = Math.max(4, Math.round(tw * .009));
+  let cw = (tw - 11 * gap) / 10, ch = cw * RATIO;
+  if (ch > th * .42) { ch = th * .42; cw = ch / RATIO; }
   const left = (tw - (10 * cw + 9 * gap)) / 2;
-  const tr = table.getBoundingClientRect();
-  const sr = $('#stock').getBoundingClientRect(), dr = $('#done').getBoundingClientRect();
+  // deck and completed piles: a little smaller than a playing card
+  const pw = cw * .8, ph = pw * RATIO;
+  const app = $('#app');
+  app.style.setProperty('--cw', cw + 'px');
+  app.style.setProperty('--ch', ch + 'px');
+  app.style.setProperty('--pw', pw + 'px');
+  app.style.setProperty('--ph', ph + 'px');
+  app.style.setProperty('--barh', Math.max(72, ph + 12) + 'px');
+  const tr = table.getBoundingClientRect(), ar = app.getBoundingClientRect();
+  const pileTop = ar.bottom - 6 - ph - tr.top;
   L = {
-    cw, ch, gap, top: gap, availH: th - gap * 2,
+    cw, ch, gap, pw, ph, top: gap, th,
     colX: Array.from({ length: 10 }, (_, c) => left + c * (cw + gap)),
-    stockX: sr.left - tr.left + 2, stockY: sr.top - tr.top + 2,
-    doneX: dr.left - tr.left + 2, doneY: dr.top - tr.top + 2,
+    pileTop,
+    stockX: tw - 8 - pw, stockY: pileTop,
+    doneX: 8, doneY: pileTop,
   };
-  table.style.setProperty('--cw', cw + 'px');
-  table.style.setProperty('--ch', ch + 'px');
   table.querySelectorAll('.slot').forEach(e => e.remove());
   L.colX.forEach(x => {
     const s = document.createElement('div');
@@ -240,19 +245,26 @@ function layout() {
   });
 }
 
-// Vertical position of each card in a column, squeezed to fit the screen.
-function fan(col) {
+// Room for a column: the end columns stop above the deck / completed pile when those are showing.
+function roomFor(c) {
+  const full = L.th - L.top - L.gap;
+  if ((c === 9 && S.stock.length) || (c === 0 && S.done.length)) return L.pileTop - L.top - L.gap;
+  return full;
+}
+
+// Vertical position of each card in a column, squeezed to fit.
+function fan(col, c) {
   const n = col.length;
   if (!n) return [];
-  let down = L.ch * .1, up = L.ch * .27;
+  let down = L.ch * .05, up = L.ch * .29;
   let nd = 0, nu = 0;
   for (let i = 1; i < n; i++) col[i - 1].up ? nu++ : nd++;
-  const room = L.availH - L.ch;
+  const room = roomFor(c) - L.ch;
   if (nd * down + nu * up > room) {
-    up = nu ? Math.max((room - nd * down) / nu, L.ch * .16) : up;
+    up = nu ? Math.max((room - nd * down) / nu, L.ch * .17) : up;
     if (nd * down + nu * up > room) {
-      down = Math.min(down, L.ch * .05);
-      up = nu ? Math.max((room - nd * down) / nu, L.ch * .08) : up;
+      down = Math.min(down, L.ch * .03);
+      up = nu ? Math.max((room - nd * down) / nu, L.ch * .09) : up;
     }
   }
   const out = [0];
@@ -276,35 +288,32 @@ function render(opts = {}) {
   const seen = new Set();
   let delay = 0;
   S.cols.forEach((col, c) => {
-    const offs = fan(col);
+    const offs = fan(col, c);
     col.forEach((card, i) => {
       const e = els.get(card.id);
       seen.add(card.id);
       const x = L.colX[c], y = L.top + offs[i];
-      const wasHidden = e.classList.contains('gone') || e.style.opacity === '0';
-      e.classList.remove('gone', 'drag');
+      const wasHidden = e.classList.contains('gone') || e.classList.contains('instock');
+      e.classList.remove('gone', 'drag', 'instock');
       setFace(e, card);
-      const old = pos.get(card.id);
-      if (opts.stagger && old && (old.x !== x || old.y !== y) && wasHidden) {
-        e.style.transitionDelay = (delay++ * 35) + 'ms';
-      } else e.style.transitionDelay = '0ms';
-      e.style.opacity = 1;
+      e.style.transitionDelay = opts.stagger && wasHidden ? (delay++ * 35) + 'ms' : '0ms';
       place(e, x, y, 10 + i + (opts.stagger && wasHidden ? 100 : 0));
       pos.set(card.id, { x, y });
     });
   });
-  // cards in the deck sit hidden on the deck; finished runs fly to the completed pile
+  // cards still in the deck sit hidden on the deck; finished runs fly to the completed pile
   for (const card of S.stock) {
     const e = els.get(card.id);
     seen.add(card.id);
     e.style.transitionDelay = '0ms';
-    e.style.opacity = 0;
+    e.classList.add('instock');
     setFace(e, card);
     place(e, L.stockX, L.stockY, 1);
     pos.set(card.id, { x: L.stockX, y: L.stockY });
   }
   els.forEach((e, id) => {
     if (seen.has(id)) return;
+    e.classList.remove('instock');
     if (!e.classList.contains('gone')) {
       e.style.transitionDelay = '0ms';
       e.classList.add('gone');
@@ -312,77 +321,138 @@ function render(opts = {}) {
       pos.set(id, { x: L.doneX, y: L.doneY });
     }
   });
-  // reset stagger delays once the deal has finished
   if (opts.stagger) setTimeout(() => els.forEach(e => e.style.transitionDelay = '0ms'), 40 * delay + 250);
-  updateRail();
+  drawSelection();
+  updatePiles();
 }
 
-function updateRail() {
+function drawSelection() {
+  els.forEach(e => e.classList.remove('sel'));
+  if (!sel) return;
+  if (!movableFrom(sel.c, sel.i)) { sel = null; return; }
+  S.cols[sel.c].slice(sel.i).forEach(c => els.get(c.id).classList.add('sel'));
+}
+
+function updatePiles() {
   const deals = S.stock.length / 10;
   const st = $('#stock');
-  st.innerHTML = deals
-    ? Array.from({ length: deals }, (_, i) => `<img src="${Cards.backURL(settings.back)}" style="left:${i * 3}px;top:${-i * 0}px" alt="">`).join('') + `<span class="badge">${deals}</span>`
-    : '<div class="empty"></div>';
+  st.style.width = (L ? L.pw + (deals - 1) * 5 : 0) + 'px';
+  st.style.height = 'var(--ph)';
+  st.innerHTML = Array.from({ length: deals }, (_, i) =>
+    `<img src="${Cards.backURL(settings.back)}" style="right:${i * 5}px" alt="">`).join('');
   const dn = $('#done');
-  dn.innerHTML = S.done.length
-    ? S.done.map((s, i) => `<img src="${Cards.faceURL(13, s, settings.face)}" style="left:${i * 0}px;top:0" alt="">`).join('') + `<span class="badge">${S.done.length}/8</span>`
-    : '<div class="empty"></div>';
+  dn.style.width = (L ? L.pw + Math.max(0, S.done.length - 1) * 5 : 0) + 'px';
+  dn.style.height = 'var(--ph)';
+  dn.innerHTML = S.done.map((s, i) => `<img src="${Cards.faceURL(13, s, settings.face)}" style="left:${i * 5}px" alt="">`).join('');
   $('#bUndo').disabled = !history.length;
+  $('#bRedo').disabled = !future.length;
 }
 
-// ---------- Input: drag, tap ----------
-let drag = null;
-table.addEventListener('pointerdown', e => {
-  if (drag || !S || S.won) return;
-  const el = e.target.closest('.card');
-  if (!el) return;
+// ---------- Menu bar ----------
+const bar = $('#bar');
+const showBar = on => bar.classList.toggle('open', on);
+
+// ---------- Input: tap to select, tap to place; drag also works ----------
+function cardAt(el) {
+  if (!el) return null;
   const id = +el.dataset.id;
-  let c = -1, i = -1;
-  S.cols.forEach((col, ci) => { const k = col.findIndex(x => x.id === id); if (k >= 0) { c = ci; i = k; } });
-  if (c < 0 || !S.cols[c][i].up) return;
+  for (let c = 0; c < 10; c++) {
+    const i = S.cols[c].findIndex(x => x.id === id);
+    if (i >= 0) return { c, i };
+  }
+  return null;
+}
+// Which column a point on the baize belongs to (below or between cards), or -1.
+function columnAt(x, y) {
+  const r = table.getBoundingClientRect();
+  x -= r.left; y -= r.top;
+  for (let c = 0; c < 10; c++) {
+    const cx = L.colX[c];
+    if (x >= cx - L.gap / 2 && x <= cx + L.cw + L.gap / 2 && y >= L.top) return c;
+  }
+  return -1;
+}
+
+function select(c, i) { sel = { c, i }; drawSelection(); }
+function unselect() { sel = null; drawSelection(); }
+
+function tap(hit, x, y) {
+  if (sel) {
+    const target = hit ? hit.c : columnAt(x, y);
+    if (hit && hit.c === sel.c) {                      // same column: cancel, or pick a different part of the run
+      if (hit.i !== sel.i && movableFrom(hit.c, hit.i)) select(hit.c, hit.i); else unselect();
+      return;
+    }
+    if (target >= 0) {
+      const card = S.cols[sel.c][sel.i];
+      if (canDrop(target, card)) { moveRun(sel.c, sel.i, target); return; }
+      if (hit && movableFrom(hit.c, hit.i)) { select(hit.c, hit.i); return; }
+      els.forEach(e => e.classList.contains('sel') && shake(e));
+      unselect();
+      return;
+    }
+    unselect();
+    return;
+  }
+  if (hit) {
+    const card = S.cols[hit.c][hit.i];
+    if (!card.up) return;
+    if (movableFrom(hit.c, hit.i)) { select(hit.c, hit.i); showBar(false); }
+    else shake(els.get(card.id));
+    return;
+  }
+  showBar(!bar.classList.contains('open'));      // tap on the baize: show or hide the menu bar
+}
+
+let press = null;
+table.addEventListener('pointerdown', e => {
+  if (press || !S || S.won) return;
   clearHint();
-  if (!movableFrom(c, i)) { shake(el); return; }
-  drag = { c, i, ids: S.cols[c].slice(i).map(x => x.id), x0: e.clientX, y0: e.clientY, moved: false, pid: e.pointerId };
+  const hit = cardAt(e.target.closest('.card'));
+  const canDrag = hit && movableFrom(hit.c, hit.i);
+  press = { hit, x0: e.clientX, y0: e.clientY, moved: false, pid: e.pointerId,
+    ids: canDrag ? S.cols[hit.c].slice(hit.i).map(x => x.id) : null };
   table.setPointerCapture(e.pointerId);
 });
 table.addEventListener('pointermove', e => {
-  if (!drag || e.pointerId !== drag.pid) return;
-  const dx = e.clientX - drag.x0, dy = e.clientY - drag.y0;
-  if (!drag.moved && Math.hypot(dx, dy) < 8) return;
-  drag.moved = true;
-  drag.dx = dx; drag.dy = dy;
-  drag.ids.forEach((id, k) => {
+  if (!press || e.pointerId !== press.pid || !press.ids) return;
+  const dx = e.clientX - press.x0, dy = e.clientY - press.y0;
+  if (!press.moved && Math.hypot(dx, dy) < 10) return;
+  if (!press.moved) { showBar(false); unselect(); }
+  press.moved = true;
+  press.dx = dx; press.dy = dy;
+  press.ids.forEach((id, k) => {
     const el = els.get(id), p = pos.get(id);
     el.classList.add('drag');
     place(el, p.x + dx, p.y + dy, 500 + k);
   });
 });
-const endDrag = e => {
-  if (!drag || e.pointerId !== drag.pid) return;
-  const d = drag;
-  drag = null;
-  if (!d.moved) { tapMove(d.c, d.i); return; }
-  const card = S.cols[d.c][d.i];
-  const x = pos.get(d.ids[0]).x + d.dx;
-  // choose the legal column the dragged card overlaps most
+const endPress = e => {
+  if (!press || e.pointerId !== press.pid) return;
+  const p = press;
+  press = null;
+  if (!p.moved) { tap(p.hit, p.x0, p.y0); return; }
+  const card = S.cols[p.hit.c][p.hit.i];
+  const x = pos.get(p.ids[0]).x + p.dx;
+  // drop on the legal column the dragged card overlaps most
   let best = -1, bestOverlap = 0;
   L.colX.forEach((cx, k) => {
-    if (k === d.c || !canDrop(k, card)) return;
+    if (k === p.hit.c || !canDrop(k, card)) return;
     const overlap = Math.min(x + L.cw, cx + L.cw) - Math.max(x, cx);
     if (overlap > bestOverlap) { bestOverlap = overlap; best = k; }
   });
-  d.ids.forEach(id => els.get(id).classList.remove('drag'));
-  if (best >= 0 && bestOverlap > L.cw * .25) moveRun(d.c, d.i, best);
+  p.ids.forEach(id => els.get(id).classList.remove('drag'));
+  if (best >= 0 && bestOverlap > L.cw * .25) moveRun(p.hit.c, p.hit.i, best);
   else render();
 };
-table.addEventListener('pointerup', endDrag);
-table.addEventListener('pointercancel', e => { if (drag && e.pointerId === drag.pid) { drag.moved = true; drag.dx = -1e6; endDrag(e); } });
+table.addEventListener('pointerup', endPress);
+table.addEventListener('pointercancel', e => {
+  if (!press || e.pointerId !== press.pid) return;
+  const p = press; press = null;
+  if (p.ids) p.ids.forEach(id => els.get(id).classList.remove('drag'));
+  render();
+});
 
-function tapMove(c, i) {
-  const dests = destinations(c, i);
-  if (!dests.length) { shake(els.get(S.cols[c][i].id)); return; }
-  moveRun(c, i, dests[0].d);
-}
 function shake(el) { el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake'); }
 
 let toastT;
@@ -410,15 +480,17 @@ function win() {
   $('#winText').textContent = `${S.moves} moves · score ${S.score} · ${S.suits} suit${S.suits > 1 ? 's' : ''}`;
   $('#win').classList.add('open');
 }
-// Starting a new game while one is unfinished breaks the winning streak.
+// Moving on from an unfinished game breaks the winning streak.
 function abandon() { if (S && S.counted && !S.won) { statFor(S.suits).streak = 0; store.set('stats', stats); } }
+function nextGame(suits = settings.suits) { abandon(); closeMenu(); showBar(false); newGame(suits); }
 
 // ---------- Menu ----------
-function openMenu(tab = 'game') {
+function openMenu(tab = 'play') {
   showTab(tab);
   $('#strict').checked = settings.strictDeal;
   $('#winnable').checked = settings.winnable;
   document.querySelectorAll('#newGame .choice').forEach(b => b.classList.toggle('on', +b.dataset.suits === settings.suits));
+  $('#nextGame').textContent = `Next game (${settings.suits} suit${settings.suits > 1 ? 's' : ''})`;
   $('#gameInfo').textContent = `This game: ${S.suits} suit${S.suits > 1 ? 's' : ''} · ${S.winnable ? 'winnable deal' : 'random deal'} · ${S.moves} moves · score ${S.score} · ${S.done.length} of 8 runs complete`;
   drawLook();
   drawStats();
@@ -446,20 +518,22 @@ function drawStats() {
   $('#statsTable').innerHTML = '<tr><th></th><th>Played</th><th>Won</th><th>Win %</th><th>Fewest moves</th><th>Streak</th><th>Best streak</th></tr>' + rows.join('');
 }
 
-$('#bMenu').onclick = () => openMenu();
+$('#bPlay').onclick = () => openMenu('play');
+$('#bOptions').onclick = () => openMenu('options');
+$('#bStats').onclick = () => openMenu('stats');
+$('#bHelp').onclick = () => openMenu('help');
 $('#mClose').onclick = closeMenu;
 $('#menu').addEventListener('pointerdown', e => { if (e.target.id === 'menu') closeMenu(); });
 document.querySelectorAll('.tabs [data-tab]').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+$('#nextGame').onclick = () => nextGame();
 $('#newGame').onclick = e => {
   const b = e.target.closest('[data-suits]');
   if (!b) return;
   settings.suits = +b.dataset.suits;
   saveSettings();
-  abandon();
-  closeMenu();
-  newGame(settings.suits);
+  nextGame(settings.suits);
 };
-$('#restart').onclick = () => { abandon(); closeMenu(); newGame(S.suits, S.seed, S.winnable); };
+$('#restart').onclick = () => { abandon(); closeMenu(); showBar(false); newGame(S.suits, S.seed, S.winnable); };
 $('#strict').onchange = e => { settings.strictDeal = e.target.checked; saveSettings(); };
 $('#winnable').onchange = e => { settings.winnable = e.target.checked; saveSettings(); };
 $('#faceChoices').onclick = e => {
@@ -476,12 +550,15 @@ $('#resetStats').onclick = () => { if (confirm('Clear all statistics?')) { stats
 $('#winNew').onclick = () => { $('#win').classList.remove('open'); newGame(settings.suits); };
 
 $('#bUndo').onclick = undo;
+$('#bRedo').onclick = redo;
 $('#bHint').onclick = hint;
 $('#stock').onclick = deal;
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); undo(); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'y') { e.preventDefault(); redo(); }
   if (e.key === 'h') hint();
   if (e.key === 'd') deal();
+  if (e.key === 'Escape') { unselect(); showBar(false); }
 });
 
 let resizeT;
@@ -493,6 +570,7 @@ addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout((
   if (saved && saved.S && saved.S.cols && !saved.S.won) {
     S = saved.S;
     history = saved.history || [];
+    future = saved.future || [];
     buildCards();
     layout();
     els.forEach(e => e.classList.add('drag'));

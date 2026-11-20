@@ -1,7 +1,9 @@
 // cards.js — draws every card face and back as SVG, so the game needs no image files.
-// Cards are 200 x 280 units. Faces are cached as data URLs for speed.
+// Cards are 200 x 310 units (taller than a standard card, like most phone solitaire games).
+// Faces are cached as data URLs for speed.
 const Cards = (() => {
-  const W = 200, H = 280;
+  const W = 200, H = 310;
+  const PH = 224;   // height of the picture panel on Jack, Queen and King
   const RANKS = ['', 'A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
   const RED = '#c4122f', BLACK = '#17181c';
   const isRed = s => s === 1 || s === 2;            // 0 spades, 1 hearts, 2 diamonds, 3 clubs
@@ -82,21 +84,21 @@ const Cards = (() => {
       let rays = '';
       for (let i = 0; i < 18; i++) {
         const a0 = Math.PI * (i / 18), a1 = Math.PI * ((i + .5) / 18);
-        const r = 260, cx = 78, cy = 196;
+        const r = 300, cx = 78, cy = PH;
         rays += `<path d="M${cx} ${cy}L${cx - r * Math.cos(a0)} ${cy - r * Math.sin(a0)}L${cx - r * Math.cos(a1)} ${cy - r * Math.sin(a1)}Z" fill="${st.bgLine}"/>`;
       }
-      return `<rect width="156" height="196" fill="${st.bg}"/>${rays}` +
-        `<circle cx="78" cy="196" r="150" fill="none" stroke="${st.gold}" stroke-width="1" opacity=".5"/>` +
-        `<circle cx="78" cy="196" r="128" fill="none" stroke="${st.gold}" stroke-width="1" opacity=".35"/>`;
+      return `<rect width="156" height="${PH}" fill="${st.bg}"/>${rays}` +
+        `<circle cx="78" cy="${PH}" r="150" fill="none" stroke="${st.gold}" stroke-width="1" opacity=".5"/>` +
+        `<circle cx="78" cy="${PH}" r="128" fill="none" stroke="${st.gold}" stroke-width="1" opacity=".35"/>`;
     }
     if (st === STYLES.royal) {
       let d = '';
-      for (let x = -196; x < 156; x += 14) d += `M${x} 196L${x + 196} 0`;
-      for (let x = 0; x < 352; x += 14) d += `M${x} 196L${x - 196} 0`;
-      return `<rect width="156" height="196" fill="${st.bg}"/><path d="${d}" stroke="${st.bgLine}" stroke-width="1.2"/>`;
+      for (let x = -PH; x < 156; x += 14) d += `M${x} ${PH}L${x + PH} 0`;
+      for (let x = 0; x < 156 + PH; x += 14) d += `M${x} ${PH}L${x - PH} 0`;
+      return `<rect width="156" height="${PH}" fill="${st.bg}"/><path d="${d}" stroke="${st.bgLine}" stroke-width="1.2"/>`;
     }
     // modern: a soft suit-coloured circle behind the figure
-    return `<rect width="156" height="196" fill="${st.bg}"/><circle cx="78" cy="92" r="70" fill="${isRed(s) ? '#fde8ea' : '#eceef3'}"/>`;
+    return `<rect width="156" height="${PH}" fill="${st.bg}"/><circle cx="78" cy="120" r="70" fill="${isRed(s) ? '#fde8ea' : '#eceef3'}"/>`;
   }
 
   function figure(rank, s, st) {
@@ -225,20 +227,20 @@ const Cards = (() => {
   function faceCard(rank, s, styleKey) {
     const st = STYLES[styleKey] || STYLES.royal;
     const col = suitColour(s);
-    const border = st.frame ? `<rect x="22" y="72" width="156" height="194" rx="8" fill="none" stroke="${st.frame}" stroke-width="3"/>` : '';
+    const border = st.frame ? `<rect x="22" y="72" width="156" height="${PH}" rx="8" fill="none" stroke="${st.frame}" stroke-width="3"/>` : '';
     return frame(index(rank, s, col) +
-      `<defs><clipPath id="p"><rect x="0" y="0" width="156" height="194" rx="8"/></clipPath></defs>` +
-      `<g transform="translate(22 72)" clip-path="url(#p)">${background(st, s)}${figure(rank, s, st)}</g>` + border);
+      `<defs><clipPath id="p"><rect x="0" y="0" width="156" height="${PH}" rx="8"/></clipPath></defs>` +
+      `<g transform="translate(22 72)" clip-path="url(#p)">${background(st, s)}<g transform="translate(0 ${PH - 196})">${figure(rank, s, st)}</g></g>` + border);
   }
 
   function numberCard(rank, s) {
     const col = suitColour(s);
     let body = index(rank, s, col);
     if (rank === 1) {
-      body += `<circle cx="100" cy="172" r="70" fill="none" stroke="${col}" stroke-width="2" opacity=".25"/>`;
-      body += suit(s, 50, 122, 100, col);
+      body += `<circle cx="100" cy="190" r="72" fill="none" stroke="${col}" stroke-width="2" opacity=".25"/>`;
+      body += suit(s, 50, 140, 100, col);
     } else {
-      const xs = [50, 100, 150], top = 98, bottom = 246, size = 34;
+      const xs = [50, 100, 150], top = 104, bottom = 276, size = 36;
       for (const [c, r] of PIPS[rank]) {
         const cx = xs[c], cy = top + r * (bottom - top);
         body += suit(s, cx - size / 2, cy - size / 2, size, col, r > .5);
@@ -262,7 +264,7 @@ const Cards = (() => {
       `<rect x="10" y="10" width="${W - 20}" height="${H - 20}" rx="8" fill="url(#l)"/>` +
       `<rect x="10" y="10" width="${W - 20}" height="${H - 20}" rx="8" fill="none" stroke="${k.c}" stroke-width="3"/>` +
       `<rect x="20" y="20" width="${W - 40}" height="${H - 40}" rx="5" fill="none" stroke="${k.c}" stroke-width="1.2" opacity=".7"/>` +
-      `<g transform="translate(70 110)">${suitShape(0, k.c).replace('<path', '<path opacity=".9" transform="scale(.6)"')}</g>` +
+      `<g transform="translate(70 125)">${suitShape(0, k.c).replace('<path', '<path opacity=".9" transform="scale(.6)"')}</g>` +
       `</svg>`;
   }
 
